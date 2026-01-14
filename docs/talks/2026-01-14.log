@@ -1,0 +1,115 @@
+# 대화 로그 - 2026-01-14
+
+## 오늘의 학습 내용
+
+### RAG 파이프라인 구현 완료
+
+---
+
+## 임베딩 구현
+
+### OpenAI vs HuggingFace 비교
+| 항목 | OpenAI | HuggingFace |
+|------|--------|-------------|
+| 비용 | 유료 (API 호출당 과금) | 무료 (로컬 실행) |
+| 실행 위치 | 클라우드 (API 호출) | 로컬 (내 컴퓨터) |
+| API 키 | 필요 | 불필요 |
+
+### 선택: HuggingFace (무료, 로컬)
+- 모델: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 (한국어 지원)
+
+### 패키지 설치
+- langchain-huggingface 설치 시 sentence-transformers가 자동 설치되지 않음 (선택적 의존성)
+- 별도 설치: pip install sentence-transformers
+
+### SentenceTransformer 사용
+- model.encode()에 문자열 리스트 전달
+- Document 객체가 아닌 page_content(문자열) 전달 필요
+- 리스트 컴프리헨션: [chunk.page_content for chunk in chunked_text]
+
+### 임베딩 결과
+- 타입: numpy.ndarray
+- shape: (143, 384) - 143개 청크, 각 384차원 벡터
+
+---
+
+## Chroma 저장 - 방식 1 (직접 임베딩)
+
+### collection.add() 파라미터
+| 파라미터 | 필수 | 설명 |
+|----------|------|------|
+| ids | 필수 | 고유 문자열 ID 리스트 |
+| embeddings | 선택 | 벡터 리스트 |
+| documents | 선택 | 원본 텍스트 리스트 |
+
+### 코드 구현
+- ids: [f"doc_{i}" for i in range(len(embedded_text))]
+- embeddings: embedded_text.tolist() (numpy → list 변환)
+- documents: [chunk.page_content for chunk in chunked_text]
+
+### 검색 구현
+- 같은 임베딩 모델로 쿼리 임베딩
+- query_embeddings 파라미터 사용
+- n_results로 결과 개수 지정
+
+### 검색 결과 출력
+- results['documents'][0]: 문서 리스트
+- results['distances'][0]: 거리 리스트 (낮을수록 유사)
+
+---
+
+## Chroma 저장 - 방식 2 (Chroma 임베딩)
+
+### 핵심 차이
+- 방식 1: 직접 임베딩 → Chroma 저장 → query_embeddings로 검색
+- 방식 2: Chroma가 알아서 임베딩 & 저장 → query_texts로 검색
+
+### embedding_function 설정
+```python
+from chromadb.utils import embedding_functions
+
+embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+)
+
+collection = chroma_client.create_collection(
+    name="my_collection2",
+    embedding_function=embedding_function,
+)
+```
+
+### 문서 추가 (embeddings 없이)
+```python
+collection.add(
+    ids=[f"doc_{i}" for i in range(len(chunked_text))],
+    documents=[chunk.page_content for chunk in chunked_text],
+)
+```
+
+### 두 방식 비교
+| 항목 | 방식 1 (직접 임베딩) | 방식 2 (Chroma 임베딩) |
+|------|---------------------|----------------------|
+| 코드량 | 많음 | 적음 |
+| 임베딩 제어 | 완전한 제어 | Chroma에 위임 |
+| 검색 | query_embeddings | query_embeddings 또는 query_texts |
+| 일관성 | 직접 관리 | 자동 보장 |
+
+### 거리 값 차이
+- 방식 1: 10.43 ~ 15.31
+- 방식 2: 0.31 ~ 0.48
+- 이유: 거리 계산 방식(metric)이나 정규화 차이
+- 순위는 동일
+
+---
+
+## RAG 파이프라인 완료!
+
+```
+문서 로딩 ✅ → 청킹 ✅ → 임베딩 ✅ → Chroma 저장 ✅ → 검색 ✅
+```
+
+### 다음 단계 (개발 단계 2~5)
+2. 질문 → 벡터 검색 → 답변 (기본 Q&A)
+3. 웹 검색 도구 구현
+4. 라우팅 로직: 문서 검색 → 웹 검색 폴백
+5. Streamlit UI
