@@ -1,0 +1,128 @@
+# 대화 로그 - 2026-01-19
+
+## 오늘의 학습 내용
+
+### 2단계: 기본 Q&A (질문 → 검색 → 답변) 완료
+
+---
+
+## OpenAI 연동
+
+### 패키지 설치
+- `langchain-openai` 설치
+- 의존성: langchain-core, openai, tiktoken 자동 설치
+
+### ChatOpenAI 연결 테스트
+- 모델: gpt-4o-mini
+- 환경변수: OPENAI_API_KEY (.env 파일에 설정)
+
+### 에러 해결: RateLimitError (429)
+- 원인: OpenAI 계정 크레딧 부족 (insufficient_quota)
+- 해결: 크레딧 충전 후 정상 동작
+
+---
+
+## RAG Q&A 구현
+
+### ChatPromptTemplate 사용법
+```python
+from langchain_core.prompts import ChatPromptTemplate
+
+prompt_template = ChatPromptTemplate.from_messages([
+    ("system", "시스템 메시지: {context}"),
+    ("human", "{question}"),
+])
+```
+
+### LCEL 체인 구성
+```python
+from langchain_core.output_parsers import StrOutputParser
+
+chain = prompt_template | chat_model | StrOutputParser()
+response = chain.invoke({
+    "context": context,
+    "question": question,
+})
+```
+
+### context 추출 방법
+- Chroma 검색 결과: `results['documents'][0]` (리스트)
+- 문자열로 합치기: `"\n".join(docs)`
+
+---
+
+## ChromaDB 영구 저장 (PersistentClient)
+
+### 인메모리 vs 영구 저장
+| 모드 | 클라이언트 | 저장 위치 | 프로그램 종료 시 |
+|------|-----------|----------|----------------|
+| 인메모리 | `Client()` | RAM | 데이터 소멸 |
+| 영구 저장 | `PersistentClient()` | 디스크 | 데이터 유지 |
+
+### import 방식 차이
+```python
+# 모듈 전체 import
+import chromadb
+chromadb.PersistentClient(path="...")
+
+# 직접 import
+from chromadb import PersistentClient
+PersistentClient(path="...")
+```
+
+### 컬렉션 중복 에러 해결
+- `create_collection()` → 이미 존재하면 에러
+- `get_or_create_collection()` → 있으면 가져오고, 없으면 생성
+
+### 최종 코드 구조
+```python
+def persistent_chromadb_save():
+    chroma_client = PersistentClient(path="./chroma_db")
+    collection = chroma_client.get_or_create_collection(
+        name="my_collection_persistent",
+        embedding_function=embedding_function,
+    )
+    collection.add(...)
+```
+
+---
+
+## RAG 패턴 정리
+
+```
+1. 문서 로딩 (TextLoader)
+       ↓
+2. 청킹 (RecursiveCharacterTextSplitter)
+       ↓
+3. 임베딩 + ChromaDB 저장 (Chroma가 자동 처리)
+       ↓
+4. 사용자 질문 → ChromaDB 유사도 검색 (Retrieval)
+       ↓
+5. 검색된 문서(context) + 질문 → LLM → 답변 생성 (Augmented Generation)
+```
+
+| 단계 | 역할 |
+|------|------|
+| Retrieval (검색) | ChromaDB에서 관련 문서 찾기 |
+| Augmented (증강) | 검색된 문서를 프롬프트에 추가 |
+| Generation (생성) | LLM이 문서 기반으로 답변 생성 |
+
+---
+
+## 개발 단계 진행 상황
+
+```
+1. RAG 파이프라인 ✅
+2. 기본 Q&A (질문 → 검색 → 답변) ✅
+3. 웹 검색 도구 구현 ← 다음 단계
+4. 라우팅 로직 (문서 검색 → 웹 검색 폴백)
+5. Streamlit UI
+```
+
+---
+
+## 추후 개선 포인트
+
+- 저장(인덱싱)과 검색 로직 분리
+- 문서 변경 시에만 인덱싱 실행
+- 중복 데이터 추가 방지

@@ -2,9 +2,17 @@ from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 from chromadb import Client as ChromaClient
+from chromadb import PersistentClient
 from chromadb.utils import embedding_functions
+import os
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
 
 file_path = "assets/2026_jaykim.txt"
+load_dotenv()
 
 def load_text_document():
     loader = TextLoader(file_path)
@@ -70,6 +78,24 @@ def chromadb_embed_save():
     return chroma_client
 
 
+def persistent_chromadb_save():
+    chunked_text = chunk_text_document()
+
+    embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    )
+    chroma_client = PersistentClient(path="./chroma_db")
+    collection = chroma_client.get_or_create_collection(
+        name="my_collection_persistent",
+        embedding_function=embedding_function,
+    )
+    collection.add(
+        ids=[f"doc_{i}" for i in range(len(chunked_text))],
+        documents=[chunk.page_content for chunk in chunked_text],
+    )
+    
+    return chroma_client
+
 
 
 def search_chromadb(chroma_client, collection_name, query):
@@ -78,19 +104,44 @@ def search_chromadb(chroma_client, collection_name, query):
     collection = chroma_client.get_collection(name=collection_name)
     results = collection.query(query_embeddings=query_embedding.tolist(), n_results=5)
     
-    for i, doc in enumerate(results['documents'][0]):
-      print(f"[결과 {i+1}]")
-      print(doc)
-      print()
+    # for i, doc in enumerate(results['documents'][0]):
+    #   print(f"[결과 {i+1}]")
+    #   print(doc)
+    #   print()
 
-    print("--------------------------------")
+    # print("--------------------------------")
     
-    for i, (doc, dist) in enumerate(zip(results['documents'][0], results['distances'][0])):
-      print(f"[결과 {i+1}] 거리: {dist:.4f}")
-      print(doc)
-      print()
+    # for i, (doc, dist) in enumerate(zip(results['documents'][0], results['distances'][0])):
+    #   print(f"[결과 {i+1}] 거리: {dist:.4f}")
+    #   print(doc)
+    #   print()
 
     return results
+
+
+
+def search_openai():
+    question = input("질문을 입력하세요: ")
+
+    chroma_client = PersistentClient(path="./chroma_db")
+    results = search_chromadb(chroma_client, "my_collection_persistent", question)
+    docs = results['documents'][0]
+    context = "\n".join(docs)
+
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    chat_model = ChatOpenAI(model='gpt-4o-mini', temperature=0.5)
+    prompt_template = ChatPromptTemplate.from_messages(
+        [
+            ("system", "다음 문서를 참고해서 질문에 답변을 한국어로 해 주세요: {context}"),
+            ("human", "{question}"),
+        ]
+    )
+    chain = prompt_template | chat_model | StrOutputParser()
+    response = chain.invoke({
+        "context": context,
+        "question": question,
+    })
+    return response
 
 
 
@@ -112,9 +163,18 @@ def main():
     # chroma_client = save_chromadb(origin_text, chunked_text)
     # search_chromadb(chroma_client,  "my_collection",  "개발 경력")
 
-    # chromadb embed 저장
-    chroma_client = chromadb_embed_save()
-    search_chromadb(chroma_client, "my_collection2", "개발 경력")
+    # # chromadb embed 저장
+    # chroma_client = chromadb_embed_save()
+    # context = search_chromadb(chroma_client, "my_collection2", "개발 경력")
+    # print(context)
+
+    # # persistent chromadb 저장
+    chroma_client = persistent_chromadb_save()
+    # search_chromadb(chroma_client, "my_collection_persistent", "개발 경력")
+
+    # # openapi 연동
+    openai_response = search_openai()
+    print(openai_response)
 
 
 if __name__ == "__main__":

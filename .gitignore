@@ -1,3 +1,6 @@
 
 # python venv
 myenv/
+
+# env file
+src/.env
